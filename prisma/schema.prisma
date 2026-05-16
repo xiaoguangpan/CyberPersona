@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AppState {
+  key          String   @id
+  data         Json
+  importedFrom String?
+  importedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ProviderSettings {
+  key          String   @id
+  data         Json
+  importedFrom String?
+  importedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model CallLog {
+  id            String   @id
+  type          String
+  provider      String
+  source        String
+  startedAt     DateTime
+  durationMs    Int
+  streaming     Boolean  @default(false)
+  status        String
+  inputSummary  String
+  outputSummary String
+  errorMessage  String?
+  request       Json?
+  response      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([type, startedAt])
+  @@index([status, startedAt])
+}
+
+model ChatSendRequest {
+  id              String   @id @default(cuid())
+  clientRequestId String   @unique
+  userId          String?
+  personaId       String?
+  status          String
+  result          Json?
+  error           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, personaId, createdAt])
+  @@index([status, createdAt])
+}
+
+model MediaAsset {
+  id        String   @id @default(cuid())
+  kind      String
+  url       String
+  path      String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([kind, createdAt])
+}

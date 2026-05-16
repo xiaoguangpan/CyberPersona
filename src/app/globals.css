@@ -2,25 +2,101 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica,
+      "Source Han Sans CN", "Noto Sans CJK SC", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
+
+    --bg: #ffffff;
+    --bg-subtle: #fafaf9;
+    --bg-muted: #f5f5f4;
+    --bg-elevated: #ffffff;
+    --border: #e7e5e4;
+    --border-strong: #d6d3d1;
+    --text: #1c1917;
+    --text-muted: #57534e;
+    --text-subtle: #a8a29e;
+    --text-inverse: #fafaf9;
+    --brand: #1c1917;
+    --brand-fg: #fafaf9;
+    --success: #15803d;
+    --warning: #b45309;
+    --danger: #b91c1c;
+    --bubble-in: #f5f5f4;
+    --bubble-in-fg: #1c1917;
+    --bubble-out: #1c1917;
+    --bubble-out-fg: #fafaf9;
+  }
+
+  .dark {
+    --bg: #0c0a09;
+    --bg-subtle: #1c1917;
+    --bg-muted: #292524;
+    --bg-elevated: #1c1917;
+    --border: #292524;
+    --border-strong: #44403c;
+    --text: #fafaf9;
+    --text-muted: #a8a29e;
+    --text-subtle: #57534e;
+    --text-inverse: #1c1917;
+    --brand: #fafaf9;
+    --brand-fg: #1c1917;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --bubble-in: #292524;
+    --bubble-in-fg: #fafaf9;
+    --bubble-out: #fafaf9;
+    --bubble-out-fg: #1c1917;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    letter-spacing: -0.005em;
+  }
+
+  ::selection {
+    background-color: rgba(28, 25, 23, 0.12);
+  }
+
+  /* Hide native scrollbar gutter jumps on tab switches */
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  /* Numeric tabular for time/data */
+  .tabular {
+    font-variant-numeric: tabular-nums;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
 @layer utilities {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .hide-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scroll {
+    scrollbar-width: none;
+  }
   .text-balance {
     text-wrap: balance;
   }
