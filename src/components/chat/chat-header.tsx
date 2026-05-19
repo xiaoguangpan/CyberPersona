@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Album, Settings, UserRound } from "lucide-react";
+import { Album, HeartCrack, Settings, UserRound } from "lucide-react";
 import type { Persona } from "@/lib/types";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -11,9 +11,11 @@ import { fetchCurrentUser } from "@/lib/services";
 export function ChatHeader({
   persona,
   onOpenCard,
+  onBreakup,
 }: {
   persona: Persona;
   onOpenCard: () => void;
+  onBreakup: () => void;
 }) {
   const user = useQuery({ queryKey: ["me"], queryFn: fetchCurrentUser });
   return (
@@ -39,6 +41,16 @@ export function ChatHeader({
             <Link href={`/album/${persona.id}`}>
               <Album className="h-4 w-4" />
             </Link>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="分手"
+            className="text-danger hover:text-danger"
+            onClick={onBreakup}
+          >
+            <HeartCrack className="h-4 w-4" />
           </Button>
           {user.data?.isAdmin ? (
             <Button asChild variant="ghost" size="icon" aria-label="后台">

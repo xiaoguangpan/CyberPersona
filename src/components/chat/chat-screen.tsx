@@ -139,8 +139,12 @@ export function ChatScreen() {
         breakupCountToday: result.breakupCountToday,
         lastBrokenPersonaId: result.lastBrokenPersonaId,
       });
+      setLocalMessages([]);
       void queryClient.invalidateQueries({ queryKey: ["activePersona"] });
+      void queryClient.invalidateQueries({ queryKey: ["activeMessages"] });
+      void queryClient.invalidateQueries({ queryKey: ["breakupCooldown"] });
       void queryClient.invalidateQueries({ queryKey: ["brokenPersonas"] });
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
     },
   });
 
@@ -249,7 +253,7 @@ export function ChatScreen() {
 
   return (
     <main className="min-h-screen bg-bg">
-      <ChatHeader persona={persona} onOpenCard={() => setCardOpen(true)} />
+      <ChatHeader persona={persona} onOpenCard={() => setCardOpen(true)} onBreakup={() => setBreakupOpen(true)} />
       <div className="mx-auto grid max-w-[1120px] grid-cols-1 md:grid-cols-[1fr_300px]">
         <section className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col border-x border-border bg-bg-subtle/40 md:border-l">
           <div
@@ -304,6 +308,7 @@ export function ChatScreen() {
         open={breakupOpen}
         onOpenChange={setBreakupOpen}
         onConfirm={() => breakupMutation.mutate()}
+        pending={breakupMutation.isPending}
       />
       {cooldown ? (
         <CooldownOverlay

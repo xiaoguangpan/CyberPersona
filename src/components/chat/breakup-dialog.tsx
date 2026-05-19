@@ -8,10 +8,12 @@ export function BreakupDialog({
   open,
   onOpenChange,
   onConfirm,
+  pending = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
+  pending?: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -29,11 +31,11 @@ export function BreakupDialog({
             </p>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={pending}>
               取消
             </Button>
-            <Button variant="destructive" onClick={onConfirm}>
-              确认分手
+            <Button variant="destructive" onClick={onConfirm} disabled={pending}>
+              {pending ? "正在分手…" : "确认分手"}
             </Button>
           </div>
         </div>
