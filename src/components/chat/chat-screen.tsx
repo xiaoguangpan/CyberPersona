@@ -36,6 +36,12 @@ export function ChatScreen() {
     lastBrokenPersonaId?: string;
   } | null>(null);
   const [localMessages, setLocalMessages] = React.useState<ChatMessage[]>([]);
+  const messagesContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const messagesContentRef = React.useRef<HTMLDivElement | null>(null);
+  const hasInitialScrolledRef = React.useRef(false);
+  const userScrolledAwayRef = React.useRef(false);
+  const scrollFrameRef = React.useRef<number | null>(null);
+  const scrollTimeoutRef = React.useRef<number | null>(null);
 
   const personaQuery = useQuery({ queryKey: ["activePersona"], queryFn: fetchActivePersona });
   const messageQuery = useQuery({ queryKey: ["activeMessages"], queryFn: fetchActiveMessages });
@@ -138,6 +144,70 @@ export function ChatScreen() {
     },
   });
 
+  const scrollToLatest = React.useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+
+    const scroll = () => {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+    };
+
+    scroll();
+    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      scroll();
+    });
+
+    if (scrollTimeoutRef.current !== null) window.clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = window.setTimeout(() => {
+      scrollTimeoutRef.current = null;
+      scroll();
+    }, 120);
+  }, []);
+
+  const isNearBottom = React.useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+  }, []);
+
+  const handleMessagesScroll = React.useCallback(() => {
+    userScrolledAwayRef.current = !isNearBottom();
+  }, [isNearBottom]);
+
+  const latestMessage = localMessages[localMessages.length - 1];
+
+  React.useLayoutEffect(() => {
+    if (!localMessages.length && !sendMutation.isPending) return;
+    const shouldStickToBottom =
+      !hasInitialScrolledRef.current
+      || !userScrolledAwayRef.current
+      || latestMessage?.role === "user"
+      || sendMutation.isPending;
+    if (!shouldStickToBottom) return;
+    scrollToLatest(hasInitialScrolledRef.current ? "smooth" : "auto");
+    hasInitialScrolledRef.current = true;
+    userScrolledAwayRef.current = false;
+  }, [latestMessage, localMessages.length, scrollToLatest, sendMutation.isPending]);
+
+  React.useEffect(() => {
+    const el = messagesContentRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (!userScrolledAwayRef.current) scrollToLatest("auto");
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollToLatest]);
+
+  React.useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+      if (scrollTimeoutRef.current !== null) window.clearTimeout(scrollTimeoutRef.current);
+    };
+  }, []);
+
   if (assigning || assignMutation.isPending) return <AssignmentScreen />;
   if (personaQuery.isLoading || messageQuery.isLoading || brokenQuery.isLoading || cooldownQuery.isLoading) return <AssignmentScreen />;
 
@@ -181,13 +251,20 @@ export function ChatScreen() {
     <main className="min-h-screen bg-bg">
       <ChatHeader persona={persona} onOpenCard={() => setCardOpen(true)} />
       <div className="mx-auto grid max-w-[1120px] grid-cols-1 md:grid-cols-[1fr_300px]">
-        <section className="flex min-h-[calc(100vh-3.5rem)] flex-col border-x border-border bg-bg-subtle/40 md:border-l">
-          <div className="flex-1 space-y-1 py-5">
-            <DateDivider label="今天 19:20" />
-            {localMessages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))}
-            {sendMutation.isPending ? <TypingIndicator /> : null}
+        <section className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col border-x border-border bg-bg-subtle/40 md:border-l">
+          <div
+            ref={messagesContainerRef}
+            onScroll={handleMessagesScroll}
+            className="flex-1 overflow-y-auto overscroll-contain scroll-smooth"
+          >
+            <div ref={messagesContentRef} className="space-y-1 py-5">
+              <DateDivider label="今天 19:20" />
+              {localMessages.map((message) => (
+                <MessageBubble key={message.id} message={message} />
+              ))}
+              {sendMutation.isPending ? <TypingIndicator /> : null}
+              <div aria-hidden="true" className="h-1" />
+            </div>
           </div>
           <ChatInput
             onSend={(text) => sendMutation.mutate({ text, clientRequestId: createClientRequestId() })}

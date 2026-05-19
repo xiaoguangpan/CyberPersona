@@ -295,7 +295,7 @@ export function createFallback(userMessage: string): TurnOutput {
   } else if (/晚安|睡觉|哄我睡/.test(text)) {
     safeText = "那你先安静一点，我陪你待一会儿，再慢慢去睡。";
     emotion = "温柔靠近";
-  } else if (/照片|自拍|图片|看看你|发张/.test(text)) {
+  } else if (/照片|自拍|图片|相片|看看你|发图|发张|拍一张/.test(text)) {
     safeText = "等我找个光好一点的角度。";
     emotion = "稍微犹豫又愿意配合";
   }
@@ -383,18 +383,55 @@ function uniqueByKey<T>(list: T[], keyOf: (item: T) => string) {
   return result;
 }
 
+function looksLikeEphemeralScene(value: string) {
+  return /窗边|靠窗|沙发|卧室|床上|图书馆|书店|咖啡馆|公园|泳池|游泳|海边|天台|街边|路上|看书|拍照|自拍|今天|现在|刚才|这次|刚刚/.test(value);
+}
+
+function filterStableStringMap(map?: Record<string, string>) {
+  if (!map) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(map)) {
+    if (!value || looksLikeEphemeralScene(value)) continue;
+    result[key] = value;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function filterStablePreferences(map?: Record<string, string | string[]>) {
+  if (!map) return undefined;
+  const result: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(map)) {
+    const joined = Array.isArray(value) ? value.join("/") : value;
+    if (!joined || looksLikeEphemeralScene(joined)) continue;
+    result[key] = value;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function filterStableMemoryItems(items?: string[]) {
+  return (items ?? []).filter((item) => !looksLikeEphemeralScene(item));
+}
+
 function applyCharacterCardUpdate(card: CharacterCard, update: TurnCharacterCardUpdate) {
+  const stableHabits = filterStableStringMap(update.habits);
+  const stablePreferences = filterStablePreferences(update.preferences);
+  const stableMemories = update.memories ? {
+    events: filterStableMemoryItems(update.memories.events),
+    milestones: filterStableMemoryItems(update.memories.milestones),
+    gifts: filterStableMemoryItems(update.memories.gifts),
+  } : undefined;
+
   if (update.identity) Object.assign(card.identity, update.identity);
   if (update.physicalTraits) Object.assign(card.physicalTraits, update.physicalTraits);
   if (update.personalitySelfDescription) Object.assign(card.personalitySelfDescription, update.personalitySelfDescription);
-  if (update.preferences) Object.assign(card.preferences, update.preferences);
+  if (stablePreferences) Object.assign(card.preferences, stablePreferences);
   if (update.innerWorld) Object.assign(card.innerWorld, update.innerWorld);
-  if (update.habits) Object.assign(card.habits, update.habits);
-  if (update.memories) {
+  if (stableHabits) Object.assign(card.habits, stableHabits);
+  if (stableMemories) {
     const memories = card.memories;
-    if (update.memories.events) memories.events = uniqueByKey([...memories.events, ...update.memories.events], (item) => item);
-    if (update.memories.milestones) memories.milestones = uniqueByKey([...memories.milestones, ...update.memories.milestones], (item) => item);
-    if (update.memories.gifts) memories.gifts = uniqueByKey([...memories.gifts, ...update.memories.gifts], (item) => item);
+    if (stableMemories.events.length) memories.events = uniqueByKey([...memories.events, ...stableMemories.events], (item) => item);
+    if (stableMemories.milestones.length) memories.milestones = uniqueByKey([...memories.milestones, ...stableMemories.milestones], (item) => item);
+    if (stableMemories.gifts.length) memories.gifts = uniqueByKey([...memories.gifts, ...stableMemories.gifts], (item) => item);
   }
 }
 
@@ -407,7 +444,7 @@ const MEMORY_LIMITS = {
 };
 
 function applyMemoryUpdate(memory: PersonaMemory, update: TurnMemoryUpdate) {
-  if (typeof update.lastSummary === "string" && update.lastSummary) memory.lastSummary = update.lastSummary;
+  if (typeof update.lastSummary === "string" && update.lastSummary && !looksLikeEphemeralScene(update.lastSummary)) memory.lastSummary = update.lastSummary;
   if (typeof update.nicknameForUser === "string" && update.nicknameForUser) memory.nicknameForUser = update.nicknameForUser;
   if (typeof update.nicknameForSelf === "string" && update.nicknameForSelf) memory.nicknameForSelf = update.nicknameForSelf;
   if (update.sharedRoutinesAdd?.length) {

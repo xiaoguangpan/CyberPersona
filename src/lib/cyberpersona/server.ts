@@ -50,6 +50,16 @@ type ImageGenerationResponse = {
   data?: Array<{ b64_json?: string; url?: string }>;
 };
 
+type MediaResult = {
+  url: string;
+  path?: string;
+};
+
+type GeneratedImageResult = MediaResult & {
+  fallback?: boolean;
+  fallbackReason?: string;
+};
+
 type InitialMedia = {
   referencePhotoUrl: string;
   referencePhotoPath?: string;
@@ -319,18 +329,43 @@ async function saveDataUrl(dataUrl: string, prefix: string) {
   return { url: mediaUrl(name), path: outputPath };
 }
 
+
+function fastImageSize(prefix: string) {
+  return prefix === "reference-photo" ? "1024x1024" : "1024x1024";
+}
+
+function fastImageQuality(_prefix: string) {
+  return "low";
+}
+
 async function runVendorImage(input: {
   prompt: string;
   prefix: string;
   referencePhotoPath?: string;
   source?: string;
-}) {
+}): Promise<MediaResult | null> {
   const start = Date.now();
   const settings = await getProviderSettings();
   const script = vendorImageScript();
   const apiKey = settings.image.apiKey;
-  const baseUrl = settings.image.baseUrl;
+  const baseUrl = settings.image.baseUrl?.trim().replace(/\/+$/, "");
   const logSource = input.source || "vendor-image";
+  if (!settings.image.enabled) {
+    await recordCall({
+      type: "image",
+      provider: settings.image.provider || "vendor-image",
+      source: logSource,
+      startedAt: start,
+      durationMs: Date.now() - start,
+      streaming: false,
+      status: "unconfigured",
+      inputSummary: input.prompt,
+      outputSummary: "",
+      errorMessage: "Image API 未启用",
+      request: { enabled: false, baseUrl },
+    });
+    return null;
+  }
   if (!apiKey || !baseUrl) {
     await recordCall({
       type: "image",
@@ -349,20 +384,7 @@ async function runVendorImage(input: {
   }
   try {
     await fs.access(script);
-  } catch (error) {
-    await recordCall({
-      type: "image",
-      provider: settings.image.provider || "vendor-image",
-      source: logSource,
-      startedAt: start,
-      durationMs: Date.now() - start,
-      streaming: false,
-      status: "error",
-      inputSummary: input.prompt,
-      outputSummary: "",
-      errorMessage: error instanceof Error ? error.message : "vendor image script 不可访问",
-      request: { script },
-    });
+  } catch {
     return null;
   }
   const outputDir = await mediaRoot();
@@ -371,11 +393,13 @@ async function runVendorImage(input: {
     script,
     "--json",
     "--size",
-    "1024x1536",
+    fastImageSize(input.prefix),
     "--quality",
-    input.prefix === "reference-photo" ? "high" : "low",
+    fastImageQuality(input.prefix),
     "--format",
-    "png",
+    "jpeg",
+    "--compression",
+    "80",
     "--moderation",
     "low",
   ];
@@ -409,7 +433,7 @@ async function runVendorImage(input: {
         inputSummary: input.prompt,
         outputSummary: "",
         errorMessage: parsed.message || "vendor image 返回未成功",
-        request: { args, model: settings.image.model, baseUrl },
+        request: { args, model: settings.image.model, baseUrl, optimizedForLatency: true },
         response: parsed,
       });
       return null;
@@ -425,7 +449,7 @@ async function runVendorImage(input: {
       status: "ok",
       inputSummary: input.prompt,
       outputSummary: result.url,
-      request: { args, model: settings.image.model, baseUrl },
+      request: { args, model: settings.image.model, baseUrl, optimizedForLatency: true },
       response: parsed,
     });
     return result;
@@ -441,7 +465,7 @@ async function runVendorImage(input: {
       inputSummary: input.prompt,
       outputSummary: "",
       errorMessage: error instanceof Error ? error.message : "vendor image 调用异常",
-      request: { args, model: settings.image.model, baseUrl },
+      request: { args, model: settings.image.model, baseUrl, optimizedForLatency: true },
     });
     return null;
   }
@@ -456,39 +480,150 @@ async function fetchImageFromProvider(seed: CyberPersonaSeed) {
   if (vendor) return vendor;
 
   const apiKey = settings.image.apiKey;
-  const baseUrl = settings.image.baseUrl?.replace(/\/+$/, "");
-  if (!apiKey || !baseUrl) return null;
-  const response = await fetch(`${baseUrl}/images/generations`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: settings.image.model || "gpt-image-2",
-      prompt: buildReferencePhotoPrompt(seed),
-      size: "1024x1536",
-      quality: "high",
-      n: 1,
-    }),
+  const baseUrl = settings.image.baseUrl?.trim().replace(/\/+$/, "");
+  if (!settings.image.enabled || !apiKey || !baseUrl) return null;
+  const prompt = buildReferencePhotoPrompt(seed);
+  const body = {
+    model: settings.image.model || "gpt-image-2",
+    prompt,
+    size: "1024x1024",
+    quality: "low",
+    n: 1,
+  };
+  return requestImageResult({
+    url: `${baseUrl}/images/generations`,
+    init: {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    prefix: "reference-photo",
+    prompt,
+    provider: settings.image.provider || "image",
+    source: "direct-image-reference",
+    request: { endpoint: "/images/generations", baseUrl, model: body.model, size: body.size, quality: body.quality, optimizedForLatency: true },
   });
-  if (!response.ok) return null;
-  const data = (await response.json()) as ImageGenerationResponse;
-  const first = data.data?.[0];
-  if (first?.b64_json) return saveDataUrl(`data:image/png;base64,${first.b64_json}`, "reference-photo");
-  if (first?.url) return { url: first.url };
-  return null;
 }
 
-async function imageResultFromResponse(response: Response, prefix: string) {
-  if (!response.ok) return null;
-  const data = (await response.json()) as ImageGenerationResponse;
+async function imageResultFromData(data: ImageGenerationResponse, prefix: string): Promise<MediaResult | null> {
   const first = data.data?.[0];
   if (first?.b64_json) return saveDataUrl(`data:image/png;base64,${first.b64_json}`, prefix);
   if (first?.url) return { url: first.url };
   return null;
 }
 
+async function requestImageResult(input: {
+  url: string;
+  init: RequestInit;
+  prefix: string;
+  prompt: string;
+  provider: string;
+  source: string;
+  request: unknown;
+}): Promise<MediaResult | null> {
+  const start = Date.now();
+  try {
+    const response = await fetch(input.url, input.init);
+    const text = await response.text();
+    let data: ImageGenerationResponse | null = null;
+    try {
+      data = text ? JSON.parse(text) as ImageGenerationResponse : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      await recordCall({
+        type: "image",
+        provider: input.provider,
+        source: input.source,
+        startedAt: start,
+        durationMs: Date.now() - start,
+        streaming: false,
+        status: "error",
+        inputSummary: input.prompt,
+        outputSummary: "",
+        errorMessage: `HTTP ${response.status} ${text.slice(0, 180)}`,
+        request: input.request,
+        response: { status: response.status, body: text.slice(0, 4000) },
+      });
+      return null;
+    }
+
+    if (!data) {
+      await recordCall({
+        type: "image",
+        provider: input.provider,
+        source: input.source,
+        startedAt: start,
+        durationMs: Date.now() - start,
+        streaming: false,
+        status: "error",
+        inputSummary: input.prompt,
+        outputSummary: "",
+        errorMessage: "Image API 返回的 JSON 无法解析",
+        request: input.request,
+        response: { status: response.status, body: text.slice(0, 4000) },
+      });
+      return null;
+    }
+
+    const first = data.data?.[0];
+    const result = await imageResultFromData(data, input.prefix);
+    if (!result) {
+      await recordCall({
+        type: "image",
+        provider: input.provider,
+        source: input.source,
+        startedAt: start,
+        durationMs: Date.now() - start,
+        streaming: false,
+        status: "error",
+        inputSummary: input.prompt,
+        outputSummary: "",
+        errorMessage: "Image API 未返回 b64_json 或 url",
+        request: input.request,
+        response: { status: response.status, items: data.data?.length ?? 0, hasB64: Boolean(first?.b64_json), hasUrl: Boolean(first?.url) },
+      });
+      return null;
+    }
+
+    await recordCall({
+      type: "image",
+      provider: input.provider,
+      source: input.source,
+      startedAt: start,
+      durationMs: Date.now() - start,
+      streaming: false,
+      status: "ok",
+      inputSummary: input.prompt,
+      outputSummary: result.url,
+      request: input.request,
+      response: { status: response.status, items: data.data?.length ?? 0, hasB64: Boolean(first?.b64_json), hasUrl: Boolean(first?.url) },
+    });
+    return result;
+  } catch (error) {
+    await recordCall({
+      type: "image",
+      provider: input.provider,
+      source: input.source,
+      startedAt: start,
+      durationMs: Date.now() - start,
+      streaming: false,
+      status: "error",
+      inputSummary: input.prompt,
+      outputSummary: "",
+      errorMessage: error instanceof Error ? error.message : "Image API 调用异常",
+      request: input.request,
+    });
+    return null;
+  }
+}
+
 async function fetchConsistentImageFromProvider(input: {
   prompt: string;
   referencePhotoPath?: string;
+  source?: string;
 }) {
   const settings = await getProviderSettings();
   const photoRealism = "Keep the same person as the reference photo. Render as an iPhone front-camera casual photo: natural skin texture, slight lens imperfection, handheld framing, realistic ambient light, no studio glamour, no CGI, no plastic skin, no over-retouching.";
@@ -496,13 +631,17 @@ async function fetchConsistentImageFromProvider(input: {
     prompt: `${input.prompt}\n${photoRealism}`,
     prefix: "consistent-image",
     referencePhotoPath: input.referencePhotoPath,
+    source: input.source,
   }).catch(() => null);
   if (vendor) return vendor;
 
   const apiKey = settings.image.apiKey;
-  const baseUrl = settings.image.baseUrl?.replace(/\/+$/, "");
-  if (!apiKey || !baseUrl) return null;
+  const baseUrl = settings.image.baseUrl?.trim().replace(/\/+$/, "");
+  if (!settings.image.enabled || !apiKey || !baseUrl) return null;
   const prompt = `${input.prompt}\n${photoRealism}`;
+  const provider = settings.image.provider || "image";
+  const source = input.source || "direct-image";
+  const model = settings.image.model || "gpt-image-2";
   if (input.referencePhotoPath) {
     const resolved = path.resolve(input.referencePhotoPath);
     const root = await mediaRoot();
@@ -510,42 +649,63 @@ async function fetchConsistentImageFromProvider(input: {
       const image = await fs.readFile(resolved).catch(() => null);
       if (image) {
         const formData = new FormData();
-        formData.set("model", settings.image.model || "gpt-image-2");
+        formData.set("model", model);
         formData.set("prompt", prompt);
         formData.set("image", new Blob([image], { type: "image/png" }), path.basename(resolved));
-        formData.set("size", "1024x1536");
-        const response = await fetch(`${baseUrl}/images/edits`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}` },
-          body: formData,
+        formData.set("size", "1024x1024");
+        formData.set("quality", "low");
+        const edited = await requestImageResult({
+          url: `${baseUrl}/images/edits`,
+          init: {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}` },
+            body: formData,
+          },
+          prefix: "consistent-image",
+          prompt,
+          provider,
+          source,
+          request: { endpoint: "/images/edits", baseUrl, model, size: "1024x1024", quality: "low", hasReferenceImage: true, optimizedForLatency: true },
         });
-        const edited = await imageResultFromResponse(response, "consistent-image");
         if (edited) return edited;
       }
     }
   }
-  const response = await fetch(`${baseUrl}/images/generations`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: settings.image.model || "gpt-image-2",
-      prompt,
-      size: "1024x1536",
-      quality: "high",
-      n: 1,
-    }),
+  const body = {
+    model,
+    prompt,
+    size: "1024x1024",
+    quality: "low",
+    n: 1,
+  };
+  return requestImageResult({
+    url: `${baseUrl}/images/generations`,
+    init: {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    prefix: "consistent-image",
+    prompt,
+    provider,
+    source,
+    request: { endpoint: "/images/generations", baseUrl, model, size: body.size, quality: body.quality },
   });
-  return imageResultFromResponse(response, "consistent-image");
 }
 
 export async function generateConsistentPersonaImage(input: {
   prompt: string;
   referencePhotoUrl?: string;
   referencePhotoPath?: string;
-}) {
+  source?: string;
+}): Promise<GeneratedImageResult> {
   const generated = await fetchConsistentImageFromProvider(input).catch(() => null);
   if (generated) return generated;
-  return { url: input.referencePhotoUrl || imageSvgDataUrl(fallbackSeed()) };
+  return {
+    url: input.referencePhotoUrl || imageSvgDataUrl(fallbackSeed()),
+    fallback: true,
+    fallbackReason: "Image API 未配置或返回失败",
+  };
 }
 
 async function synthesizeVoiceDesign(seed: CyberPersonaSeed) {

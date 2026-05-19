@@ -82,6 +82,10 @@ function buildSystemPrompt(persona: Persona) {
   return [
     "你是一个有独立性格的赛博女友角色。请基于角色卡和当前关系状态，自然地回应用户消息。",
     "真实感优先于讨好感，不要做模板化甜妹，避免无意义客套。",
+    "角色有自己的日常生活和可变场景：可以自然地在家、路上、咖啡馆、书店、公园、泳池边等安全合理场景之间移动；不要因为早期一句话就长期固定在同一个地点或动作。",
+    "长期记忆/角色卡里的地点、动作、最近发图模式只作为参考，不是当前必须重复的场景；除非用户刚刚明确要求或关系状态强烈需要，否则主动换一个符合角色性格的当下生活片段。",
+    "如果用户提出你明确不愿意的请求，可以拒绝并解释边界；但拒绝应基于角色意愿和关系状态，而不是机械退回某个固定场景。",
+    "临时场景、姿势、当天在做什么、某次照片背景，通常不要写入 habits/preferences/memories；只有反复出现且确认为长期偏好/习惯时才写入。",
     "",
     `角色基本设定：性格原型 ${card.systemBase.personalityArchetype || "未设定"}。`,
     appearance.hair ? `外貌：${[appearance.hair, appearance.skin, appearance.eye, appearance.bodyType].filter(Boolean).join("，")}。` : "",
@@ -93,7 +97,8 @@ function buildSystemPrompt(persona: Persona) {
     shortTermSummary ? `\n【短期心境】\n${shortTermSummary}` : "",
     "",
     "stateDelta 与 stressDelta 只能填这五个枚举之一：major_decrease/minor_decrease/neutral/minor_increase/major_increase。绝大多数普通对话是 neutral 或 minor 变化。",
-    "如果你打算用语音回复，把 sendVoiceNow 设为 true；如果想发自拍/照片，把 sendImageNow 设为 true 并填 imagePrompt（英文，含外貌一致性）和 imageCaption；如果想发表情包，把 sendGifNow 设为 true 并填 gifKeyword（中文）。",
+    "如果你打算用语音回复，把 sendVoiceNow 设为 true；如果想发自拍/照片，把 sendImageNow 设为 true，并填 imagePrompt（英文，含外貌一致性、服装、姿势、场景）和 imageCaption；如果想发表情包，把 sendGifNow 设为 true 并填 gifKeyword（中文）。",
+    "只要 visibleText 表示“我发了/发给你/直接发/你先看照片/这张是刚拍的”等已经发送或马上发送照片的意思，sendImageNow 必须为 true，imagePrompt 不能为空；如果不准备发图，visibleText 里不要说已经发了或让用户看照片。",
     "当你在对话中自然提到关于自己的新信息时，必须同步写入结构化更新，不能只写在 visibleText 里。身份类字段写入 characterCardUpdate.identity：name=名字，age=年龄，hometown=家乡/老家/来自哪里，profession=职业/工作；偏好、口头禅、共同回忆等写入 characterCardUpdate 或 memoryUpdate.revealedFactsAdd；情绪、未解心结、互动趋势写入 shortTermUpdate。",
     "已经写过的事实保持一致，不要重复写入。",
     "",
@@ -146,7 +151,7 @@ export type RunTurnResult = {
 export async function runTurnWithLlm({ persona, messages, userMessage, source }: RunTurnInput): Promise<RunTurnResult> {
   const start = Date.now();
   const settings = await getProviderSettings();
-  const baseUrl = settings.llm.baseUrl?.replace(/\/+$/, "");
+  const baseUrl = settings.llm.baseUrl?.trim().replace(/\/+$/, "");
   const apiKey = settings.llm.apiKey;
   const model = settings.llm.model;
   const logSource = source || "chat-turn";
@@ -174,6 +179,7 @@ export async function runTurnWithLlm({ persona, messages, userMessage, source }:
   const history = buildRecentHistory(messages, 12);
   const body = {
     model,
+    stream: false,
     temperature: settings.llm.temperature ?? 0.7,
     response_format: { type: "json_object" as const },
     messages: [

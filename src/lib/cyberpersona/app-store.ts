@@ -1,7 +1,7 @@
 import { pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { AlbumItem, AdminChatRecord, AdminPersonaRow, AdminTurnRecord, AdminUserRow, ChatMessage, Persona, UserProfile } from "@/lib/types";
 import { getProviderSettings } from "@/lib/cyberpersona/provider-settings";
-import { createInitialPersonaBundle } from "@/lib/cyberpersona/server";
+import { createInitialPersonaBundle, generateConsistentPersonaImage } from "@/lib/cyberpersona/server";
 import { runTurnWithLlm } from "@/lib/cyberpersona/llm";
 import { applyTurnDelta, type TurnOutput } from "@/lib/cyberpersona/turn";
 import { getRequiredPrismaClient } from "@/lib/cyberpersona/db";
@@ -59,6 +59,43 @@ function todayKey() {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function compactIntentText(text: string) {
+  return text.replace(/\s+/g, "").replace(/[，。！？!?,.、；;：:~～…]/g, "");
+}
+
+function messageText(message: ChatMessage) {
+  return [message.text, message.imageCaption, message.imageFailedText, message.stickerKeyword].filter(Boolean).join(" ");
+}
+
+function userExplicitlyRequestsImage(text: string) {
+  const compact = compactIntentText(text);
+  if (!compact) return false;
+  return /照片|自拍|图片|相片|发图|发张|拍张|拍一张|看看你|看下你|看一下你/.test(compact);
+}
+
+function assistantClaimsImageSent(text: string) {
+  const compact = compactIntentText(text);
+  if (/不发|不能发|不给你发|不想发/.test(compact)) return false;
+  return /照片.*(发给你|发了|已发|发出来)|自拍.*(发给你|发了|已发|发出来)|图片.*(发给你|发了|已发|发出来)|你先看照片|先看照片|这张(照片|自拍).*(给你|发给你|发了|已发|发出来|先看)/.test(compact);
+}
+
+function shouldGenerateAssistantImage(inputText: string, replyText: string, turn: TurnOutput) {
+  return turn.sendImageNow
+    || userExplicitlyRequestsImage(inputText)
+    || assistantClaimsImageSent(replyText);
+}
+
+function buildAssistantImagePrompt(inputText: string, replyText: string, messages: ChatMessage[]) {
+  const recent = messages.slice(-6).map((message) => `${message.role}: ${messageText(message)}`).filter((line) => line.trim()).join("\n");
+  return [
+    "Casual realistic phone selfie of the same young Chinese woman from the persona reference photo.",
+    `Current user request: ${inputText}`,
+    replyText ? `Assistant reply context: ${replyText}` : "",
+    recent ? `Recent conversation context:\n${recent}` : "",
+    "Follow any mentioned outfit, pose, place, or mood. Natural iPhone front-camera look, realistic skin texture, no text, no watermark, no studio glamour.",
+  ].filter(Boolean).join("\n");
 }
 
 function emptyState(): AppState {
@@ -454,22 +491,20 @@ async function synthesizeAssistantVoice(origin: string, text: string, persona: P
 }
 
 async function generateAssistantImage(origin: string, prompt: string, persona: Persona, useReferencePhoto: boolean) {
+  void origin;
   try {
     const appearance = persona.characterCard.appearance;
     const composedPrompt = [prompt, appearance.hair, appearance.skin, appearance.eye, appearance.photoOutfit, appearance.bodyType].filter(Boolean).join("，");
-    const response = await fetch(`${origin}/api/image/persona`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: composedPrompt,
-        referencePhotoUrl: useReferencePhoto ? persona.referencePhotoUrl : undefined,
-        referencePhotoPath: useReferencePhoto ? (persona.referencePhotoPath ?? persona.characterCard.referencePhotoPath) : undefined,
-      }),
+    const result = await generateConsistentPersonaImage({
+      prompt: composedPrompt,
+      referencePhotoUrl: useReferencePhoto ? persona.referencePhotoUrl : undefined,
+      referencePhotoPath: useReferencePhoto ? (persona.referencePhotoPath ?? persona.characterCard.referencePhotoPath) : undefined,
+      source: "chat-image",
     });
-    if (!response.ok) return null;
-    return await response.json() as { ok: boolean; imageUrl?: string };
-  } catch {
-    return null;
+    if (result.fallback) return { ok: false, message: result.fallbackReason || "图片生成失败" };
+    return { ok: true, imageUrl: result.url };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "图片生成失败" };
   }
 }
 
@@ -487,14 +522,15 @@ async function generateAssistantSticker(origin: string, keyword: string) {
   }
 }
 
-function messageCreditCost(messages: ChatMessage[], settings: Awaited<ReturnType<typeof getProviderSettings>>) {
+function messageCreditCost(messages: ChatMessage[], settings: Awaited<ReturnType<typeof getProviderSettings>>, includeDialogueTurnCost = true) {
   return messages.reduce((sum, message) => {
     if (message.role !== "assistant") return sum;
     if (message.type === "voice") return sum + settings.credits.voiceMessageCost;
     if (message.type === "image") return sum + settings.credits.imageMessageCost;
     if (message.type === "sticker") return sum + settings.credits.stickerMessageCost;
+    if (message.type === "image_failed" || message.type === "image_loading") return sum;
     return sum + settings.credits.textMessageCost;
-  }, settings.credits.dialogueTurnCost);
+  }, includeDialogueTurnCost ? settings.credits.dialogueTurnCost : 0);
 }
 
 export async function sendUserMessage(userId: string, input: SendUserMessageInput, origin: string) {
@@ -610,17 +646,23 @@ export async function sendUserMessage(userId: string, input: SendUserMessageInpu
   });
 
   const shouldSendVoice = input.type !== "sticker" && (turn.sendVoiceNow || replyText.length >= 12);
-  const tts = shouldSendVoice ? await synthesizeAssistantVoice(origin, replyText, persona) : null;
-  const wantImage = turn.sendImageNow || /照片|自拍|图片|看看你|发张/.test(input.text);
-  const image = wantImage
-    ? await generateAssistantImage(origin, turn.imagePrompt || input.text, persona, turn.useReferencePhoto !== false)
-    : null;
+  const wantImage = shouldGenerateAssistantImage(input.text, replyText, turn);
+  const imagePrompt = wantImage ? turn.imagePrompt || buildAssistantImagePrompt(input.text, replyText, personaMessages) : "";
+  const useReferencePhoto = turn.useReferencePhoto || Boolean(persona.referencePhotoUrl || persona.referencePhotoPath || persona.characterCard.referencePhotoPath);
   const stickerKeyword = input.type === "sticker"
     ? (input.stickerKeyword ?? input.text)
     : turn.sendGifNow && turn.gifKeyword
       ? turn.gifKeyword
       : null;
-  const sticker = stickerKeyword ? await generateAssistantSticker(origin, stickerKeyword) : null;
+
+  // Media generation is intentionally parallel: image generation is the slowest
+  // path, so waiting for TTS before starting the image makes photo replies feel
+  // much slower than necessary.
+  const [tts, image, sticker] = await Promise.all([
+    shouldSendVoice ? synthesizeAssistantVoice(origin, replyText, persona) : Promise.resolve(null),
+    wantImage ? generateAssistantImage(origin, imagePrompt, persona, useReferencePhoto) : Promise.resolve(null),
+    stickerKeyword ? generateAssistantSticker(origin, stickerKeyword) : Promise.resolve(null),
+  ]);
 
   const voiceAssistant: ChatMessage = tts?.ok && tts.audioUrl
     ? {
@@ -630,19 +672,34 @@ export async function sendUserMessage(userId: string, input: SendUserMessageInpu
         audioDurationSec: tts.durationSec,
       }
     : assistant;
+  const imageMessage: ChatMessage | null = image?.ok && image.imageUrl
+    ? {
+        id: `m_img_${now + 2}_${randomUUID()}`,
+        personaId: persona.id,
+        role: "assistant",
+        type: "image",
+        imageUrl: image.imageUrl,
+        imageCaption: turn.imageCaption || "这张更接近现在的我。",
+        clientRequestId,
+        requestId,
+        turnId,
+        createdAt: new Date(now + 1400).toISOString(),
+      }
+    : wantImage
+      ? {
+          id: `m_img_failed_${now + 2}_${randomUUID()}`,
+          personaId: persona.id,
+          role: "assistant",
+          type: "image_failed",
+          imageFailedText: turn.imageFailedText || image?.message || "这张照片刚才没发出来，我再试一次。",
+          clientRequestId,
+          requestId,
+          turnId,
+          createdAt: new Date(now + 1400).toISOString(),
+        }
+      : null;
   const mediaMessages: ChatMessage[] = [
-    ...(image?.ok && image.imageUrl ? [{
-      id: `m_img_${now + 2}_${randomUUID()}`,
-      personaId: persona.id,
-      role: "assistant" as const,
-      type: "image" as const,
-      imageUrl: image.imageUrl,
-      imageCaption: turn.imageCaption || "这张更接近现在的我。",
-      clientRequestId,
-      requestId,
-      turnId,
-      createdAt: new Date(now + 1400).toISOString(),
-    }] : []),
+    ...(imageMessage ? [imageMessage] : []),
     ...(sticker?.ok && sticker.stickerUrl ? [{
       id: `m_sticker_${now + 3}_${randomUUID()}`,
       personaId: persona.id,
@@ -659,7 +716,7 @@ export async function sendUserMessage(userId: string, input: SendUserMessageInpu
   const voiceCost = voiceAssistant.type === "voice"
     ? Math.max(0, settings.credits.voiceMessageCost - settings.credits.textMessageCost)
     : 0;
-  const mediaCost = messageCreditCost(mediaMessages, settings) + voiceCost;
+  const mediaCost = messageCreditCost(mediaMessages, settings, false) + voiceCost;
 
   const mediaResult = await updateState((next) => {
     const storedUser = next.users.find((item) => item.id === userId && item.status === "active");
@@ -689,7 +746,7 @@ export async function sendUserMessage(userId: string, input: SendUserMessageInpu
     const turnRecord = next.turns.find((item) => item.id === turnId);
     if (turnRecord) {
       turnRecord.sendVoiceNow = voiceAssistant.type === "voice";
-      turnRecord.sendImageNow = mediaMessages.some((message) => message.type === "image");
+      turnRecord.sendImageNow = mediaMessages.some((message) => message.type === "image" || message.type === "image_failed");
       turnRecord.sendGifNow = mediaMessages.some((message) => message.type === "sticker");
     }
     return { assistant: [voiceAssistant, ...mediaMessages], creditsSpent: textCost + mediaCost, creditsLeft: storedUser.credits };

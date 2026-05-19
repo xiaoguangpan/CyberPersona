@@ -33,6 +33,7 @@ yarn-error.log*
 .cyberpersona-media/
 data/
 *.log
+*.pid
 
 # vercel
 .vercel

@@ -20,7 +20,18 @@ export async function POST(request: Request) {
     prompt,
     referencePhotoUrl: body?.referencePhotoUrl,
     referencePhotoPath: body?.referencePhotoPath,
+    source: "chat-image",
   });
 
-  return NextResponse.json({ ok: true, imageUrl: result.url, imagePath: result.path });
+  if (result.fallback) {
+    return NextResponse.json({
+      ok: false,
+      status: "fallback",
+      imageUrl: result.url,
+      imagePath: result.path,
+      message: result.fallbackReason || "图片接口未配置或返回失败",
+    }, { status: 502 });
+  }
+
+  return NextResponse.json({ ok: true, status: "ok", imageUrl: result.url, imagePath: result.path });
 }

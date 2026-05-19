@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const prompt = body.prompt?.trim() || "用一句话和我打招呼，你叫小满。";
     const start = Date.now();
     const settings = await getProviderSettings();
-    const baseUrl = settings.llm.baseUrl?.replace(/\/+$/, "");
+    const baseUrl = settings.llm.baseUrl?.trim().replace(/\/+$/, "");
     const apiKey = settings.llm.apiKey;
     const model = settings.llm.model;
     if (!baseUrl || !apiKey || !model) {
@@ -32,6 +32,7 @@ export async function POST(request: Request) {
     }
     const payload = {
       model,
+      stream: false,
       temperature: settings.llm.temperature ?? 0.7,
       messages: [
         { role: "system", content: "你是 CyberPersona 平台的连接测试助手。简洁、礼貌地回应。" },

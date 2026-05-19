@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: cyberpersona-web:latest
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL}
+      ADMIN_BOOTSTRAP_PHONE: ${ADMIN_BOOTSTRAP_PHONE:-}
+    extra_hosts:
+      - "cpa.itxgp.com:host-gateway"
+    ports:
+      - "127.0.0.1:3020:3000"
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      - ./scripts:/app/scripts
+      - ./package.json:/app/package.json:ro
+      - ./package-lock.json:/app/package-lock.json:ro
+      - ./next.config.mjs:/app/next.config.mjs:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./tailwind.config.ts:/app/tailwind.config.ts:ro
+      - ./postcss.config.mjs:/app/postcss.config.mjs:ro
+      - ./.eslintrc.json:/app/.eslintrc.json:ro
+      - cyberpersona_media:/app/.cyberpersona-media
+    command: sh -c "./scripts/dev-start.sh"
+
+volumes:
+  postgres_data:
+  cyberpersona_media:

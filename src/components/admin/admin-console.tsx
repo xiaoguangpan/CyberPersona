@@ -466,15 +466,16 @@ function SettingsSection({
     <section className="space-y-5">
       <SectionTitle
         title="系统配置"
-        description="只保留部署后确实会调整的项目；Provider、Base URL、ASR、调试项等使用代码默认值，不放到后台增加维护成本。"
+        description="配置运行时会读取的模型、接口地址、密钥、媒体存储和积分规则。"
         action={<Button onClick={onSave}><Save className="h-4 w-4" />保存配置</Button>}
       />
       {saved ? <p className="rounded-md bg-success/5 px-3 py-2 text-sm text-success">配置已保存</p> : null}
       <div className="grid gap-4 lg:grid-cols-2">
         <EditableCard title="LLM">
+          <SettingInput label="Base URL" value={draft.llm.baseUrl} onChange={(value) => onChange({ ...draft, llm: { ...draft.llm, baseUrl: value } })} />
           <SettingInput label="Model" value={draft.llm.model} onChange={(value) => onChange({ ...draft, llm: { ...draft.llm, model: value } })} />
           <SettingInput label="API Key" value={draft.llm.apiKeyMasked} onChange={(value) => onChange({ ...draft, llm: { ...draft.llm, apiKeyMasked: value } })} />
-          <TestProviderRow label="测试 LLM" hint="Base URL 使用代码默认值；发送一句问候验证联通性。" runner={(input) => testAdminLlm(input)} placeholder="可选：测试 prompt" />
+          <TestProviderRow label="测试 LLM" hint="使用当前保存的 Base URL、Model 和 API Key 发送一句问候验证联通性。" runner={(input) => testAdminLlm(input)} placeholder="可选：测试 prompt" />
         </EditableCard>
         <EditableCard title="TTS">
           <SettingInput label="API Key" value={draft.tts.apiKeyMasked} onChange={(value) => onChange({ ...draft, tts: { ...draft.tts, apiKeyMasked: value } })} />
@@ -482,10 +483,11 @@ function SettingsSection({
           <TestProviderRow label="测试 TTS" hint="Provider、Base URL、Model 和格式使用代码默认值。" runner={(input) => testAdminTts(input)} placeholder="可选：要合成的文本" />
         </EditableCard>
         <EditableCard title="Image">
+          <SettingInput label="Base URL" value={draft.image.baseUrl} onChange={(value) => onChange({ ...draft, image: { ...draft.image, baseUrl: value } })} />
           <SettingInput label="Model" value={draft.image.model} onChange={(value) => onChange({ ...draft, image: { ...draft.image, model: value } })} />
           <SettingInput label="API Key" value={draft.image.apiKeyMasked} onChange={(value) => onChange({ ...draft, image: { ...draft.image, apiKeyMasked: value } })} />
           <ToggleRow label="启用图片生成" enabled={draft.image.enabled} onToggle={() => onChange({ ...draft, image: { ...draft.image, enabled: !draft.image.enabled } })} />
-          <TestProviderRow label="测试 Image" hint="Base URL 使用代码默认值；生成一张连通性测试图。" runner={(input) => testAdminImage(input)} placeholder="可选：图片 prompt（英文）" />
+          <TestProviderRow label="测试 Image" hint="使用当前保存的 Base URL、Model 和 API Key 生成一张连通性测试图。" runner={(input) => testAdminImage(input)} placeholder="可选：图片 prompt（英文）" />
         </EditableCard>
         <EditableCard title="媒体存储">
           <SettingInput label="媒体文件目录" value={draft.runtime.mediaDir} onChange={(value) => onChange({ ...draft, runtime: { ...draft.runtime, mediaDir: value } })} />
